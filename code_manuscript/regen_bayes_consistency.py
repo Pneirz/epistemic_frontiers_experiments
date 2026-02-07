@@ -1,6 +1,5 @@
 """
 Generate figures for Experiment 2: Bayes-Consistency of Experimental Protocols.
-Professional styling for Nature.
 """
 
 import numpy as np

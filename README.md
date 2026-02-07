@@ -1,9 +1,8 @@
 ## Manuscript experiment bundle
 
-This folder groups **the code, figures, and data artifacts** used by the experiments reported in
-`sn-article-nature_revised.tex`, so everything can be shared as a single directory.
+This folder groups **the code, figures, and data artifacts** used by the experiments reported in manuscript, so everything can be shared as a single directory.
 
-### Figures referenced by the manuscript (`sn-article-nature_revised.tex`)
+### Figures referenced by the manuscript 
 
 - **Experiment 1 (Epistemic dissociation)**
   - `figures/epistemic_dissociation_main.png`
