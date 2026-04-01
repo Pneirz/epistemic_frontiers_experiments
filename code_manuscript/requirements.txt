@@ -7,4 +7,5 @@ seaborn==0.13.2
 lightgbm==4.6.0
 shap==0.46.0
 boruta==0.4.3
+Jinja2
 

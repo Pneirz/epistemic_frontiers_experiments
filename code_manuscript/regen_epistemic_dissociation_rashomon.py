@@ -14,7 +14,8 @@ import warnings
 from pathlib import Path
 warnings.filterwarnings('ignore')
 
-SEED = 42
+SEED = 27
+EXPERIMENT2_ANALYSIS_N = 8192
 np.random.seed(SEED)
 
 # Bundle-relative paths
@@ -22,8 +23,10 @@ _BUNDLE_DIR = Path(__file__).resolve().parents[1]
 _FIG_DIR = _BUNDLE_DIR / "figures"
 _FIG_DIR.mkdir(parents=True, exist_ok=True)
 
+EXPORT_DPI = 300
 
-def generate_epistemic_dgp(n: int = 5000, seed: int = 42) -> tuple:
+
+def generate_epistemic_dgp(n: int = EXPERIMENT2_ANALYSIS_N, seed: int = 42) -> tuple:
     """Generate data from the Complete Epistemic Dissociation DGP."""
     rng = np.random.default_rng(seed)
     
@@ -68,8 +71,9 @@ def generate_epistemic_dgp(n: int = 5000, seed: int = 42) -> tuple:
 
 
 def main():
-    # Generate data
-    X, Y, feature_names = generate_epistemic_dgp(n=5000, seed=SEED)
+    # Use a large sample so the ranking comparison reflects representation choices
+    # rather than small-sample instability, which is studied in Experiment 1.
+    X, Y, feature_names = generate_epistemic_dgp(n=EXPERIMENT2_ANALYSIS_N, seed=SEED)
     
     # Train-test split
     X_train, X_test, y_train, y_test = train_test_split(
@@ -78,7 +82,7 @@ def main():
     
     # Train models
     models = {
-        'Random Forest': RandomForestClassifier(n_estimators=200, max_depth=10, random_state=SEED, n_jobs=-1),
+        'Random Forest': RandomForestClassifier(n_estimators=200, max_depth=10, random_state=SEED, n_jobs=1),
         'Gradient Boosting': GradientBoostingClassifier(n_estimators=200, max_depth=5, random_state=SEED),
         'Logistic Regression': LogisticRegression(max_iter=1000, random_state=SEED),
         'Neural Network': MLPClassifier(hidden_layer_sizes=(64, 32), max_iter=500, random_state=SEED),
@@ -122,35 +126,64 @@ def main():
         ranking_df[name] = [rank_dict[f] for f in feature_names]
     ranking_df.index = feature_names
     
-    # Create figure
-    fig, ax = plt.subplots(figsize=(9, 5))
+    # Create a slightly larger canvas so labels and cell annotations remain crisp
+    # after LaTeX rescales the final PNG in the manuscript.
+    fig, ax = plt.subplots(figsize=(10.5, 6.2), constrained_layout=True)
     
     # Heatmap of rankings
     ranking_matrix = ranking_df.values
-    im = ax.imshow(ranking_matrix, cmap='RdYlGn_r', aspect='auto', vmin=1, vmax=7)
+    im = ax.imshow(
+        ranking_matrix,
+        cmap='RdYlGn_r',
+        aspect='auto',
+        vmin=1,
+        vmax=7,
+        interpolation='nearest',
+        resample=False,
+    )
     
     # Labels
     ax.set_xticks(range(len(model_names)))
-    ax.set_xticklabels(model_names, rotation=45, ha='right', fontsize=10)
+    ax.set_xticklabels(model_names, rotation=35, ha='right', rotation_mode='anchor', fontsize=11)
     ax.set_yticks(range(len(feature_names)))
-    ax.set_yticklabels(feature_names, fontsize=10)
+    ax.set_yticklabels(feature_names, fontsize=11)
     
     # Add text annotations
     for i in range(len(feature_names)):
         for j in range(len(model_names)):
-            ax.text(j, i, int(ranking_matrix[i, j]),
-                    ha='center', va='center', color='black', fontsize=10)
+            ax.text(
+                j,
+                i,
+                int(ranking_matrix[i, j]),
+                ha='center',
+                va='center',
+                color='black',
+                fontsize=11,
+                fontweight='semibold',
+            )
+
+    # Thin white separators keep the heatmap readable after downscaling.
+    ax.set_xticks(np.arange(-0.5, len(model_names), 1), minor=True)
+    ax.set_yticks(np.arange(-0.5, len(feature_names), 1), minor=True)
+    ax.grid(which='minor', color='white', linestyle='-', linewidth=1.0)
+    ax.tick_params(which='minor', bottom=False, left=False)
     
     # Colorbar
-    cbar = plt.colorbar(im, ax=ax)
-    cbar.set_label('SHAP rank (1 = highest importance)', rotation=270, labelpad=15, fontsize=10)
+    cbar = plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+    cbar.set_label('SHAP rank (1 = highest importance)', rotation=270, labelpad=18, fontsize=11)
+    cbar.ax.tick_params(labelsize=10)
     
-    ax.set_title('SHAP feature ranking across models', fontsize=11)
-    ax.set_xlabel('Model', fontsize=10)
-    ax.set_ylabel('Variable', fontsize=10)
+    ax.set_title('SHAP feature ranking across models', fontsize=13)
+    ax.set_xlabel('Model', fontsize=11)
+    ax.set_ylabel('Variable', fontsize=11)
     
-    plt.tight_layout()
-    fig.savefig(_FIG_DIR / 'epistemic_dissociation_rashomon.png', dpi=150, bbox_inches='tight')
+    fig.savefig(
+        _FIG_DIR / 'epistemic_dissociation_rashomon.png',
+        dpi=EXPORT_DPI,
+        bbox_inches='tight',
+        facecolor='white',
+        pad_inches=0.04,
+    )
     plt.close(fig)
     
     print("Regenerated 'epistemic_dissociation_rashomon.png'.")

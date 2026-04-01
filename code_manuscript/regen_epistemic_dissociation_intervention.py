@@ -4,6 +4,7 @@ from pathlib import Path
 
 
 SEED = 42
+EXPERIMENT2_ANALYSIS_N = 8192
 
 # Bundle-relative paths
 _BUNDLE_DIR = Path(__file__).resolve().parents[1]
@@ -11,7 +12,12 @@ _FIG_DIR = _BUNDLE_DIR / "figures"
 _FIG_DIR.mkdir(parents=True, exist_ok=True)
 
 
-def simulate_intervention(var_name: str, intervention_value: float, n: int = 5000, seed: int = 42):
+def simulate_intervention(
+    var_name: str,
+    intervention_value: float,
+    n: int = EXPERIMENT2_ANALYSIS_N,
+    seed: int = 42,
+):
     """
     Simulate do(Variable = intervention_value) by regenerating data with the variable fixed.
     This breaks all incoming causal arrows to the variable.
@@ -48,6 +54,8 @@ def simulate_intervention(var_name: str, intervention_value: float, n: int = 500
 def main():
     intervention_values = [-2, -1, 0, 1, 2]
 
+    # Use a large sample so the intervention plot foregrounds the SCM mechanism
+    # rather than sampling variation, which is analysed in Experiment 1.
     results_conf = [simulate_intervention("X_conf", v, seed=SEED) for v in intervention_values]
     results_causal = [simulate_intervention("X_causal", v, seed=SEED) for v in intervention_values]
 

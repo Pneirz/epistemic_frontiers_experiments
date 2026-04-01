@@ -30,6 +30,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import shap
 from boruta import BorutaPy
+from joblib import Parallel, delayed
 from sklearn.base import clone
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.inspection import permutation_importance
@@ -37,6 +38,7 @@ from sklearn.linear_model import Ridge
 from sklearn.model_selection import KFold, train_test_split
 
 SEED = 42
+EXPERIMENT2_ANALYSIS_N = 8192
 
 # Bundle-relative paths
 _BUNDLE_DIR = Path(__file__).resolve().parents[1]
@@ -46,7 +48,11 @@ _FIG_DIR.mkdir(parents=True, exist_ok=True)
 _DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 
-def generate_epistemic_dgp(*, n: int = 5000, seed: int = 42) -> tuple[np.ndarray, np.ndarray, list[str]]:
+def generate_epistemic_dgp(
+    *,
+    n: int = EXPERIMENT2_ANALYSIS_N,
+    seed: int = 42,
+) -> tuple[np.ndarray, np.ndarray, list[str]]:
     """Generate data from the Complete Epistemic Dissociation DGP (binary Y)."""
     rng = np.random.default_rng(seed)
 
@@ -107,6 +113,7 @@ def make_probe_by_permutation(X: np.ndarray, *, col_idx: int, seed: int) -> np.n
 
 def _fit_predict_proba1(model, X_train: np.ndarray, y_train: np.ndarray, X_test: np.ndarray) -> np.ndarray:
     mdl = clone(model)
+    mdl.set_params(n_jobs=1)  # prevent nested parallelism when called inside joblib threads
     mdl.fit(X_train, y_train)
     return mdl.predict_proba(X_test)[:, 1]
 
@@ -124,6 +131,58 @@ class PairTrial:
     delta_rmse: float
 
 
+def _process_fold(
+    X: np.ndarray,
+    y: np.ndarray,
+    feature_names: list[str],
+    model,
+    train_idx: np.ndarray,
+    test_idx: np.ndarray,
+    rep: int,
+    fold_idx: int,
+    seed: int,
+) -> list[dict]:
+    """Compute all ordered-pair null-swap trials for one (repeat, fold) slice."""
+    p = X.shape[1]
+    Xtr_all = X[train_idx]
+    ytr = y[train_idx]
+    Xte_all = X[test_idx]
+    yte = y[test_idx]
+
+    out: list[dict] = []
+    for i in range(p):
+        for j in range(p):
+            if i == j:
+                continue
+
+            cols = [i, j]
+            Xtr = Xtr_all[:, cols]
+            Xte = Xte_all[:, cols]
+
+            p_full = _fit_predict_proba1(model, Xtr, ytr, Xte)
+            rmse_full = rmse_from_proba(yte, p_full)
+
+            Xtr_probe = make_probe_by_permutation(Xtr, col_idx=1, seed=seed + 10_000 + rep * 100 + fold_idx)
+            Xte_probe = make_probe_by_permutation(Xte, col_idx=1, seed=seed + 20_000 + rep * 100 + fold_idx)
+            p_probe = _fit_predict_proba1(model, Xtr_probe, ytr, Xte_probe)
+            rmse_probe = rmse_from_proba(yte, p_probe)
+
+            out.append(
+                dict(
+                    context_feature=feature_names[i],
+                    target_feature=feature_names[j],
+                    context_idx=i,
+                    target_idx=j,
+                    repeat=rep,
+                    fold=fold_idx,
+                    rmse_full=rmse_full,
+                    rmse_probe=rmse_probe,
+                    delta_rmse=rmse_probe - rmse_full,
+                )
+            )
+    return out
+
+
 def compute_nullswap_pairs_rmse(
     X: np.ndarray,
     y: np.ndarray,
@@ -133,53 +192,27 @@ def compute_nullswap_pairs_rmse(
     n_splits: int = 10,
     n_repeats: int = 20,
     seed: int = 42,
+    n_jobs: int = -1,
 ) -> pd.DataFrame:
-    """Compute ordered-pair null-swap deltas (RMSE) under repeated 10-fold CV."""
-    p = X.shape[1]
-    out: list[PairTrial] = []
+    """Compute ordered-pair null-swap deltas (RMSE) under repeated K-fold CV.
 
+    Each (repeat, fold) slice is processed independently and can be
+    parallelised with joblib.  n_jobs=-1 uses all available CPU cores;
+    set n_jobs=1 to disable parallelism.
+    """
+    work: list[tuple[int, int, np.ndarray, np.ndarray]] = []
     for rep in range(n_repeats):
         kf = KFold(n_splits=n_splits, shuffle=True, random_state=seed + 1_000 * rep)
         for fold_idx, (train_idx, test_idx) in enumerate(kf.split(X, y)):
-            Xtr_all = X[train_idx]
-            ytr = y[train_idx]
-            Xte_all = X[test_idx]
-            yte = y[test_idx]
+            work.append((rep, fold_idx, train_idx, test_idx))
 
-            for i in range(p):
-                for j in range(p):
-                    if i == j:
-                        continue
+    batches = Parallel(n_jobs=n_jobs, prefer="threads")(
+        delayed(_process_fold)(X, y, feature_names, model, tr, te, rep, fi, seed)
+        for rep, fi, tr, te in work
+    )
 
-                    cols = [i, j]
-                    Xtr = Xtr_all[:, cols]
-                    Xte = Xte_all[:, cols]
-
-                    # Full pair model
-                    p_full = _fit_predict_proba1(model, Xtr, ytr, Xte)
-                    rmse_full = rmse_from_proba(yte, p_full)
-
-                    # Null-swap on the SECOND coordinate (j in S={i,j})
-                    Xtr_probe = make_probe_by_permutation(Xtr, col_idx=1, seed=seed + 10_000 + rep * 100 + fold_idx)
-                    Xte_probe = make_probe_by_permutation(Xte, col_idx=1, seed=seed + 20_000 + rep * 100 + fold_idx)
-                    p_probe = _fit_predict_proba1(model, Xtr_probe, ytr, Xte_probe)
-                    rmse_probe = rmse_from_proba(yte, p_probe)
-
-                    out.append(
-                        PairTrial(
-                            context_feature=feature_names[i],
-                            target_feature=feature_names[j],
-                            context_idx=i,
-                            target_idx=j,
-                            repeat=rep,
-                            fold=fold_idx,
-                            rmse_full=rmse_full,
-                            rmse_probe=rmse_probe,
-                            delta_rmse=rmse_probe - rmse_full,
-                        )
-                    )
-
-    return pd.DataFrame([t.__dict__ for t in out])
+    all_rows = [row for batch in batches for row in batch]
+    return pd.DataFrame(all_rows)
 
 
 def summarize_pairs(df_long: pd.DataFrame, *, eps: float = 0.0) -> pd.DataFrame:
@@ -244,7 +277,7 @@ def compute_importance_measures(
         scoring=_rmse_scorer,
         n_repeats=perm_repeats,
         random_state=seed,
-        n_jobs=-1,
+        n_jobs=1,
     )
     # Higher is "more important": since scoring is negative RMSE, importances_mean is (score_original - score_permuted).
     imp_perm = perm.importances_mean.astype(float)
@@ -294,7 +327,7 @@ def compute_importance_measures(
     boruta_est = RandomForestClassifier(
         n_estimators=800,
         random_state=seed,
-        n_jobs=-1,
+        n_jobs=1,
         class_weight="balanced",
         max_depth=None,
     )
@@ -333,8 +366,9 @@ def _rank_desc(values: np.ndarray) -> np.ndarray:
 
 
 def main() -> None:
-    # Data
-    n = 5000
+    # Use a large sample so Experiment 2 can focus on epistemic dissociation
+    # rather than on finite-sample instability, which is already studied in Experiment 1.
+    n = EXPERIMENT2_ANALYSIS_N
     X, y, feature_names = generate_epistemic_dgp(n=n, seed=SEED)
 
     # Base model for comparisons (kept consistent across procedures).
@@ -376,6 +410,7 @@ def main() -> None:
         n_splits=10,
         n_repeats=20,
         seed=SEED,
+        n_jobs=-1,
     )
     out_pairs_long = _DATA_DIR / "exp2_nullswap_rmse_pairs_long.csv"
     df_pairs_long.to_csv(out_pairs_long, index=False)

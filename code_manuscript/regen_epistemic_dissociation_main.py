@@ -15,7 +15,8 @@ import warnings
 from pathlib import Path
 warnings.filterwarnings('ignore')
 
-SEED = 42
+SEED = 27
+EXPERIMENT2_ANALYSIS_N = 8192
 np.random.seed(SEED)
 
 # Bundle-relative paths
@@ -24,7 +25,7 @@ _FIG_DIR = _BUNDLE_DIR / "figures"
 _FIG_DIR.mkdir(parents=True, exist_ok=True)
 
 
-def generate_epistemic_dgp(n: int = 5000, seed: int = 42) -> tuple:
+def generate_epistemic_dgp(n: int = EXPERIMENT2_ANALYSIS_N, seed: int = 42) -> tuple:
     """Generate data from the Complete Epistemic Dissociation DGP."""
     rng = np.random.default_rng(seed)
     
@@ -201,8 +202,9 @@ def _plot_main_figure(
 
 
 def main():
-    # Generate data
-    X, Y, feature_info = generate_epistemic_dgp(n=5000, seed=SEED)
+    # Use a large sample so the figure highlights epistemic structure rather than
+    # sample-size artefacts, which are analysed separately in Experiment 1.
+    X, Y, feature_info = generate_epistemic_dgp(n=EXPERIMENT2_ANALYSIS_N, seed=SEED)
     
     # Train-test split
     X_train, X_test, y_train, y_test = train_test_split(
