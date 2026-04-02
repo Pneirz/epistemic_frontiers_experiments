@@ -284,9 +284,16 @@ def make_figure(df: pd.DataFrame) -> None:
                 ax.set_xticklabels([])
 
             if col == 0:
+                ax.set_ylabel(r"$\widetilde{\Delta}$", fontsize=8)
+
+            if col == len(protocols) - 1:
+                ax.yaxis.set_label_position("right")
                 ax.set_ylabel(
-                    factor_labels[signal_factor] + "\n" + r"$\widetilde{\Delta}$",
-                    fontsize=8,
+                    factor_labels[signal_factor],
+                    fontsize=9,
+                    rotation=270,
+                    labelpad=14,
+                    color="#444444",
                 )
 
     from matplotlib.lines import Line2D
